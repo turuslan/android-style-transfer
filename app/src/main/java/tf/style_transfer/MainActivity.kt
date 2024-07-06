@@ -2,6 +2,8 @@ package tf.style_transfer
 
 import android.app.Application
 import android.content.Context
+import android.content.Intent
+import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -20,6 +22,10 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Share
+import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -35,6 +41,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.core.content.FileProvider
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -52,6 +59,7 @@ import org.tensorflow.lite.support.image.ops.ResizeOp
 import org.tensorflow.lite.support.image.ops.ResizeWithCropOrPadOp
 import org.tensorflow.lite.support.tensorbuffer.TensorBuffer
 import tf.style_transfer.ui.theme.StyleTransferTheme
+import java.io.ByteArrayOutputStream
 import java.io.InputStream
 import kotlin.math.max
 
@@ -59,6 +67,12 @@ fun InputStream.bmp(): ImageBitmap {
     val bmp = BitmapFactory.decodeStream(this)
     this.close()
     return bmp.asImageBitmap()
+}
+
+fun ImageBitmap.jpg(): ByteArray {
+    val s = ByteArrayOutputStream()
+    asAndroidBitmap().compress(Bitmap.CompressFormat.JPEG, 80, s)
+    return s.toByteArray()
 }
 
 fun Context.assetBmp(path: String): ImageBitmap {
@@ -100,6 +114,7 @@ class Model(context: Context) {
     private val transferShapeIn: IntArray = transfer.getInputTensor(0).shape()
     private val transferShapeOut: IntArray = transfer.getOutputTensor(0).shape()
 
+    // TODO: keep aspect
     fun merge(content: ImageBitmap, style: ImageBitmap): ImageBitmap {
         // TODO: reuse styleModel
         val styleTensor = TensorBuffer.createFixedSize(predictShapeOut, DataType.FLOAT32)
@@ -166,11 +181,38 @@ fun App(
     result: State<ImageBitmap?>,
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
     Column(modifier = modifier.fillMaxSize()) {
-        val fill = Modifier
-            .fillMaxWidth()
-            .weight(1f)
-        result.value?.let { Image(it, "", modifier = fill) } ?: Box(modifier = fill)
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f)
+        ) {
+            result.value?.let {
+                Image(it, "", modifier = Modifier.fillMaxSize())
+                FloatingActionButton(
+                    onClick = {
+                        val name = "share.jpg"
+                        context.openFileOutput(name, 0).apply {
+                            write(it.jpg())
+                            flush()
+                            close()
+                        }
+                        val file = context.getFileStreamPath(name)
+                        val uri = FileProvider.getUriForFile(context, "tf.style_transfer", file)
+                        context.startActivity(Intent.createChooser(Intent().apply {
+                            action = Intent.ACTION_SEND
+                            putExtra(Intent.EXTRA_STREAM, uri)
+                            type = "image/jpg"
+                        }, null))
+                    }, modifier = Modifier
+                        .padding(8.dp)
+                        .align(Alignment.TopEnd)
+                ) {
+                    Icon(Icons.Filled.Share, "")
+                }
+            }
+        }
         Row(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
