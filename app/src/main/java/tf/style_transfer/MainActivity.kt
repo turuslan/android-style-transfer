@@ -56,12 +56,10 @@ import org.tensorflow.lite.support.common.ops.NormalizeOp
 import org.tensorflow.lite.support.image.ImageProcessor
 import org.tensorflow.lite.support.image.TensorImage
 import org.tensorflow.lite.support.image.ops.ResizeOp
-import org.tensorflow.lite.support.image.ops.ResizeWithCropOrPadOp
 import org.tensorflow.lite.support.tensorbuffer.TensorBuffer
 import tf.style_transfer.ui.theme.StyleTransferTheme
 import java.io.ByteArrayOutputStream
 import java.io.InputStream
-import kotlin.math.max
 
 fun InputStream.bmp(): ImageBitmap {
     val bmp = BitmapFactory.decodeStream(this)
@@ -84,17 +82,24 @@ fun Context.assetModel(path: String): Interpreter {
 }
 
 fun ImageBitmap.tensor(shape: IntArray): TensorImage {
-    val size = max(height, width)
-    val imageProcessor = ImageProcessor.Builder().add(ResizeWithCropOrPadOp(size, size))
-        .add(ResizeOp(shape[1], shape[2], ResizeOp.ResizeMethod.BILINEAR))
-        .add(NormalizeOp(0f, 255f)).build()
+    val imageProcessor =
+        ImageProcessor.Builder().add(ResizeOp(shape[1], shape[2], ResizeOp.ResizeMethod.BILINEAR))
+            .add(NormalizeOp(0f, 255f)).build()
     val tensorImage = TensorImage(DataType.FLOAT32)
     tensorImage.load(this.asAndroidBitmap())
     return imageProcessor.process(tensorImage)
 }
 
-fun TensorBuffer.bmp(): ImageBitmap {
-    val imagePostProcessor = ImageProcessor.Builder().add(DequantizeOp(0f, 255f)).build()
+fun TensorBuffer.bmp(aspect: Float): ImageBitmap {
+    var w = shape[2]
+    var h = w
+    if (aspect < 1) {
+        w = (h.toFloat() * aspect).toInt()
+    } else {
+        h = (w.toFloat() / aspect).toInt()
+    }
+    val imagePostProcessor = ImageProcessor.Builder().add(DequantizeOp(0f, 255f))
+        .add(ResizeOp(h, w, ResizeOp.ResizeMethod.BILINEAR)).build()
     val tensorImage = TensorImage(DataType.FLOAT32)
     tensorImage.load(this)
     return imagePostProcessor.process(tensorImage).bitmap.asImageBitmap()
@@ -114,7 +119,6 @@ class Model(context: Context) {
     private val transferShapeIn: IntArray = transfer.getInputTensor(0).shape()
     private val transferShapeOut: IntArray = transfer.getOutputTensor(0).shape()
 
-    // TODO: keep aspect
     fun merge(content: ImageBitmap, style: ImageBitmap): ImageBitmap {
         // TODO: reuse styleModel
         val styleTensor = TensorBuffer.createFixedSize(predictShapeOut, DataType.FLOAT32)
@@ -125,7 +129,7 @@ class Model(context: Context) {
             arrayOf(content.tensor(transferShapeIn).buffer, styleTensor.buffer),
             mapOf(Pair(0, output.buffer))
         )
-        return output.bmp()
+        return output.bmp(content.width.toFloat() / content.height.toFloat())
     }
 }
 
