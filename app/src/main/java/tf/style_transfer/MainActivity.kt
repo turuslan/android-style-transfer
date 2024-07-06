@@ -119,17 +119,25 @@ class Model(context: Context) {
     private val transferShapeIn: IntArray = transfer.getInputTensor(0).shape()
     private val transferShapeOut: IntArray = transfer.getOutputTensor(0).shape()
 
-    fun merge(content: ImageBitmap, style: ImageBitmap): ImageBitmap {
-        // TODO: reuse styleModel
-        val styleTensor = TensorBuffer.createFixedSize(predictShapeOut, DataType.FLOAT32)
-        predict.run(style.tensor(predictShapeIn).buffer, styleTensor.buffer)
+    private var styleTensorCache: TensorBuffer? = null
+    private val output = TensorBuffer.createFixedSize(transferShapeOut, DataType.FLOAT32)
 
-        val output = TensorBuffer.createFixedSize(transferShapeOut, DataType.FLOAT32)
+    fun merge(content: ImageBitmap, style: ImageBitmap): ImageBitmap {
+        val styleTensor: TensorBuffer =
+            styleTensorCache ?: TensorBuffer.createFixedSize(predictShapeOut, DataType.FLOAT32)
+                .also {
+                    predict.run(style.tensor(predictShapeIn).buffer, it.buffer)
+                    styleTensorCache = it
+                }
         transfer.runForMultipleInputsOutputs(
             arrayOf(content.tensor(transferShapeIn).buffer, styleTensor.buffer),
-            mapOf(Pair(0, output.buffer))
+            mapOf(Pair(0, output.buffer)),
         )
         return output.bmp(content.width.toFloat() / content.height.toFloat())
+    }
+
+    fun resetStyle() {
+        styleTensorCache = null
     }
 }
 
@@ -158,6 +166,10 @@ class MyViewModel(app: Application) : AndroidViewModel(app) {
             job = null
         }
     }
+
+    fun styleChanged() {
+        model.resetStyle()
+    }
 }
 
 class MainActivity : ComponentActivity() {
@@ -166,6 +178,7 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             val vm = viewModel<MyViewModel>()
+            LaunchedEffect(vm.right.value) { vm.styleChanged() }
             LaunchedEffect(vm.left.value, vm.right.value) { vm.merge() }
             StyleTransferTheme {
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
