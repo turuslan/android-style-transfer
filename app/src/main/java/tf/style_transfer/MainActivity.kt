@@ -5,8 +5,11 @@ import android.content.Context
 import android.graphics.BitmapFactory
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -20,6 +23,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.State
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -48,13 +52,17 @@ import org.tensorflow.lite.support.image.ops.ResizeOp
 import org.tensorflow.lite.support.image.ops.ResizeWithCropOrPadOp
 import org.tensorflow.lite.support.tensorbuffer.TensorBuffer
 import tf.style_transfer.ui.theme.StyleTransferTheme
+import java.io.InputStream
 import kotlin.math.max
 
-fun Context.assetBmp(path: String): ImageBitmap {
-    val s = assets.open(path)
-    val bmp = BitmapFactory.decodeStream(s)
-    s.close()
+fun InputStream.bmp(): ImageBitmap {
+    val bmp = BitmapFactory.decodeStream(this)
+    this.close()
     return bmp.asImageBitmap()
+}
+
+fun Context.assetBmp(path: String): ImageBitmap {
+    return assets.open(path).bmp()
 }
 
 fun Context.assetModel(path: String): Interpreter {
@@ -63,11 +71,9 @@ fun Context.assetModel(path: String): Interpreter {
 
 fun ImageBitmap.tensor(shape: IntArray): TensorImage {
     val size = max(height, width)
-    val imageProcessor = ImageProcessor.Builder()
-        .add(ResizeWithCropOrPadOp(size, size))
+    val imageProcessor = ImageProcessor.Builder().add(ResizeWithCropOrPadOp(size, size))
         .add(ResizeOp(shape[1], shape[2], ResizeOp.ResizeMethod.BILINEAR))
-        .add(NormalizeOp(0f, 255f))
-        .build()
+        .add(NormalizeOp(0f, 255f)).build()
     val tensorImage = TensorImage(DataType.FLOAT32)
     tensorImage.load(this.asAndroidBitmap())
     return imageProcessor.process(tensorImage)
@@ -110,14 +116,28 @@ class Model(context: Context) {
 
 class MyViewModel(app: Application) : AndroidViewModel(app) {
     private val samples = Samples(app)
-    val left = TileProp(mutableStateOf(samples.image1))
-    val right = TileProp(mutableStateOf(samples.style1))
+    val left = mutableStateOf(samples.image1)
+    val right = mutableStateOf(samples.style1)
     val result = mutableStateOf<ImageBitmap?>(null)
     private val model = Model(app)
-    var job: Job? = null
+    private var job: Job? = null
+    private var dirty = false
 
     fun merge() {
-        result.value = model.merge(left.bmp.value, right.bmp.value)
+        result.value = null
+        dirty = true
+        if (job != null) {
+            return
+        }
+        job = viewModelScope.launch(Dispatchers.IO) {
+            var img: ImageBitmap? = null
+            while (dirty) {
+                dirty = false
+                img = model.merge(left.value, right.value)
+            }
+            result.value = img
+            job = null
+        }
     }
 }
 
@@ -127,13 +147,7 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             val vm = viewModel<MyViewModel>()
-            LaunchedEffect(Unit) {
-                if (vm.job == null) {
-                    vm.job = vm.viewModelScope.launch(Dispatchers.IO) {
-                        vm.merge()
-                    }
-                }
-            }
+            LaunchedEffect(vm.left.value, vm.right.value) { vm.merge() }
             StyleTransferTheme {
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
                     App(vm.left, vm.right, vm.result, modifier = Modifier.padding(innerPadding))
@@ -145,11 +159,12 @@ class MainActivity : ComponentActivity() {
 
 val TILE = 120.dp
 
-data class TileProp(val bmp: State<ImageBitmap>, val onClick: (() -> Unit)? = null)
-
 @Composable
 fun App(
-    left: TileProp, right: TileProp, result: State<ImageBitmap?>, modifier: Modifier = Modifier
+    left: MutableState<ImageBitmap>,
+    right: MutableState<ImageBitmap>,
+    result: State<ImageBitmap?>,
+    modifier: Modifier = Modifier
 ) {
     Column(modifier = modifier.fillMaxSize()) {
         val fill = Modifier
@@ -168,10 +183,18 @@ fun App(
 }
 
 @Composable
-fun Tile(prop: TileProp) {
-    Image(prop.bmp.value, "", modifier = Modifier
+fun Tile(img: MutableState<ImageBitmap>) {
+    val context = LocalContext.current
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) {
+        it?.let {
+            context.contentResolver.openInputStream(it)?.bmp()?.let { img.value = it }
+        }
+    }
+    Image(img.value, "", modifier = Modifier
         .size(TILE)
-        .clickable { prop.onClick?.invoke() })
+        .clickable {
+            picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+        })
 }
 
 @Preview(showBackground = true, widthDp = 340, heightDp = 600)
@@ -182,6 +205,6 @@ fun AppPreview() {
     val left = remember { mutableStateOf(samples.image1) }
     val right = remember { mutableStateOf(samples.style1) }
     StyleTransferTheme {
-        App(TileProp(left), TileProp(right), left)
+        App(left, right, left)
     }
 }
