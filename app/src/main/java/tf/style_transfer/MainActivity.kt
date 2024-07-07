@@ -57,7 +57,6 @@ import org.tensorflow.lite.support.image.ImageProcessor
 import org.tensorflow.lite.support.image.TensorImage
 import org.tensorflow.lite.support.image.ops.ResizeOp
 import org.tensorflow.lite.support.tensorbuffer.TensorBuffer
-import tf.style_transfer.ui.theme.StyleTransferTheme
 import java.io.ByteArrayOutputStream
 import java.io.InputStream
 
@@ -180,10 +179,8 @@ class MainActivity : ComponentActivity() {
             val vm = viewModel<MyViewModel>()
             LaunchedEffect(vm.right.value) { vm.styleChanged() }
             LaunchedEffect(vm.left.value, vm.right.value) { vm.merge() }
-            StyleTransferTheme {
-                Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
-                    App(vm.left, vm.right, vm.result, modifier = Modifier.padding(innerPadding))
-                }
+            Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
+                App(vm.left, vm.right, vm.result, modifier = Modifier.padding(innerPadding))
             }
         }
     }
@@ -263,7 +260,5 @@ fun AppPreview() {
     val samples = remember { Samples(context) }
     val left = remember { mutableStateOf(samples.image1) }
     val right = remember { mutableStateOf(samples.style1) }
-    StyleTransferTheme {
-        App(left, right, left)
-    }
+    App(left, right, left)
 }
